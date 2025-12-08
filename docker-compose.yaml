@@ -1,0 +1,186 @@
+x-healthchecks: &healthchecks
+  postgres: &postgres_healthcheck
+    test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:?err} -d ${POSTGRES_DB:?err}"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+  redis: &redis_healthcheck
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+
+x-postgres-env: &postgres_environment
+  POSTGRES_DB: ${POSTGRES_DB:?err}
+  POSTGRES_USER: ${POSTGRES_USER:?err}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?err}
+
+x-postgres-base: &postgres_base
+  image: postgres:14.19-alpine
+  environment: *postgres_environment
+  healthcheck: *postgres_healthcheck
+  restart: always
+
+x-redis-base: &redis_base
+  image: redis:7.0-alpine
+  command: redis-server --appendonly yes
+  healthcheck: *redis_healthcheck
+  volumes:
+    - redis_data:/data
+  restart: always
+
+x-app-db-creds: &app_db_creds
+  POSTGRES_HOST: db
+  POSTGRES_PORT: 5432
+  POSTGRES_DB: ${POSTGRES_DB:?err}
+  APP_DB_USER: ${APP_DB_USER:?err} # TODO: The app should only get the `app_db_user/pass`
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:?err}
+
+x-worker-common-env: &worker_common_env
+  INGESTION_QUEUE_HOST: redis
+  CATEGORIZATION_QUEUE_HOST: redis
+  <<: *app_db_creds
+
+services:
+
+  db:
+    <<: *postgres_base
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./outpost-weather-service/weather-service-db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    
+  redis:
+    <<: *redis_base
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  owm-scheduler:
+    build: 
+      context: ./trail-condition-etl/schedule-jobs
+      dockerfile: Dockerfile
+    command: sh -c "python /app/worker_scheduler.py && sleep 120"
+    container_name: owm_scheduler
+    restart: always
+    environment:
+      <<: *worker_common_env
+      WORKER_NAME: owm-request-scheduler-cron
+    volumes:
+      - scheduler_data:/tmp
+    depends_on:
+      redis:
+        condition: service_healthy
+  
+  owm-ingestion-workers:
+    build: 
+      context: ./trail-condition-etl/fetch-weather
+      dockerfile: Dockerfile
+    environment:
+      <<: *worker_common_env
+      WORKER_NAME: owm-ingestion-workers
+    volumes:
+      - ingestion_data:/tmp
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+        
+  weather-categorization-workers:
+    build:
+      context: ./trail-condition-etl/categorize-trail-conditions
+      dockerfile: Dockerfile
+    volumes:
+      - scheduler_data:/app/data/persistent/scheduler
+    environment:
+      <<: *worker_common_env
+      WORKER_NAME: weather-categorization-worker-1
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  outpost-api-weather:
+    build:
+      context: ./outpost-weather-service
+      dockerfile: Dockerfile
+    environment:
+      <<: *app_db_creds
+      DB_HOST: db
+      REDIS_RATE_LIMITER_HOST: redis
+      REDIS_RATE_LIMITER_PORT: 6379
+    depends_on:
+      - db
+      - redis
+
+  outpost-api-authorization:
+    build:
+      context: ./outpost-authorization
+      dockerfile: Dockerfile
+    environment:
+      REDIS_RATE_LIMITER_HOST: redis
+      REDIS_RATE_LIMITER_PORT: 6379
+      MONGO_HOST: mongodb
+      MONGO_PORT: 27017
+      PORT: 8080 
+    ports:
+      - "8001:8080"
+    depends_on:
+      - mongodb
+      - redis
+
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: nginx
+  #   ports:
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  #   depends_on:
+  #     - outpost-api-weather
+  #     - outpost-api-authorization
+
+  mongodb:
+    image: mongo:latest
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+
+  adminer:
+    image: adminer:latest
+    container_name: adminer
+    restart: always
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: redisinsight
+    ports:
+      - "5540:5540"
+    volumes:
+      - redisinsight_data:/data
+    depends_on:
+      - redis
+    
+
+volumes:
+  postgres_data:
+  redis_data:
+  scheduler_data:
+  ingestion_data:
+  redisinsight_data:
+  mongodb_data:
