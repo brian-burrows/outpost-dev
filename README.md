@@ -17,6 +17,16 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
+Create a `.env` file similar to
+
+```yaml
+POSTGRES_USER="outpost_postgres_super_user"
+POSTGRES_PASSWORD="outpost_pass"
+POSTGRES_DB="outpost_weather_db"
+APP_DB_USER="weather_app"
+APP_DB_PASSWORD="weather_app_password"
+```
+
 ## System Overview
 
 ![](./docs/images/header-image.png)
