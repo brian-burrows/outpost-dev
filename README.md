@@ -4,6 +4,13 @@ This is an end-to-end testing repository for the Outpost project.
 The aim is to let users pull down the entire source code from various repos,
 and run the project using Docker Compose.
 
+## Microservices
+
+- [Outpost ETL Core](https://github.com/brian-burrows/outpost-etl-core) : A type-safe framework for building isolated, distributed, fault-tolerant ETL pipelines.
+- [Trail Conditions ETL](https://github.com/brian-burrows/trail-condition-etl) : An ETL pipeline for extracting weather data from a third party API.
+- [Outpost Authorization](https://github.com/brian-burrows/outpost-authorization) : An authorization service written in Golang
+- [Outpost Weather Service](https://github.com/brian-burrows/outpost-weather-service) : Owns schemas and CRUD operations for internal weather data.
+
 ## Getting access to the source code
 
 This repository is just a shell script and the Docker Compose file.
